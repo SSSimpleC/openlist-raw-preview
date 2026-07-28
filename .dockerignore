@@ -6,4 +6,5 @@ docs/
 examples/
 data/
 .env
+.env.*
 .git/

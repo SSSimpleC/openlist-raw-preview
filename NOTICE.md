@@ -3,6 +3,10 @@
 本仓库是一个独立的第三方 OpenList Iframe Preview sidecar，不是 OpenList
 官方插件，也不代表 OpenList Team。仓库没有复制或修改 OpenList 主程序源代码。
 
+OpenList 主项目采用其仓库声明的 AGPL-3.0 许可证；本项目只调用其文档化的预览
+配置，不把 OpenList 源码打包进本项目。将本项目与 OpenList 或其他软件组合分发时，
+请分别遵守各组件的许可证要求。
+
 - OpenList：本项目通过其文档化的 Iframe Preview 配置传入 `$e_url`；OpenList
   本身的代码、名称和许可证以其官方仓库为准：
   <https://github.com/OpenListTeam/OpenList>

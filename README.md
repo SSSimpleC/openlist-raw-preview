@@ -1,5 +1,8 @@
 # OpenList RAW Preview
 
+[![CI](https://github.com/SSSimpleC/openlist-raw-preview/actions/workflows/ci.yml/badge.svg)](https://github.com/SSSimpleC/openlist-raw-preview/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+
 一个独立的、请求驱动的 RAW 照片网页预览 sidecar，通过 OpenList 的
 `iframe_previews` 配置接入。它不是 OpenList 官方插件，也不修改 OpenList 主程序。
 
@@ -18,6 +21,10 @@
 本项目是第三方集成：OpenList 负责文件列表、权限和签名 URL，本项目只负责把已
 授权的 RAW 文件转换为浏览器可显示的 JPEG。项目与 OpenList Team 没有隶属关系，
 也不保证 OpenList 未公开的内部 API 行为。
+
+这是一个个人维护的独立项目，不是 OpenList 官方插件、官方扩展或官方推荐方案。
+如果你在发行版、教程或产品中重新分发它，请保留本仓库的许可证、第三方声明和
+本段非官方关系说明。
 
 本项目原创代码使用 MIT License；依赖和 OpenList 各自适用其原有许可证。详见
 [`NOTICE.md`](NOTICE.md)。
@@ -95,3 +102,6 @@ docker compose --env-file .env.example config --quiet
 “非 OpenList 官方项目”的声明；不要把它命名成官方插件或暗示 OpenList Team 背书。
 若未来希望进入 OpenList 主项目，再另行按其贡献指南讨论文档示例或原生集成方案，
 这不是本仓库发布的前置条件。
+
+本仓库的初始版本在人工设计、审阅和测试的基础上使用了 AI 辅助开发。具体范围、
+人工验证边界和后续贡献披露规则见 [`AI_USAGE.md`](AI_USAGE.md)。

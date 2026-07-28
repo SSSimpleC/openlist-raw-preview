@@ -31,7 +31,7 @@ class OpenListUrlTests(unittest.TestCase):
 
     def test_rejects_foreign_origin(self):
         self.assert_rejected(
-            "http://example.invalid/p/PhotoBackup/test.NEF?sign=x", 403
+            "http://example.invalid/p/Photos/test.NEF?sign=dummy", 403
         )
 
     def test_rejects_path_traversal(self):
