@@ -15,6 +15,8 @@ OpenList 主项目采用其仓库声明的 AGPL-3.0 许可证；本项目只调�
   <https://github.com/letmaik/rawpy>
 - LibRaw：RAW 解码库，许可证和相机支持以其官方项目为准：
   <https://www.libraw.org/>
+- ExifRead：用于读取通用 EXIF/GPS 字段的纯 Python 库，采用 BSD-3-Clause 许可证：
+  <https://github.com/ianare/exif-py>
 - Pillow、NumPy：运行时依赖，许可证以各自项目和安装包为准。
 
 本项目原创代码使用 MIT License。使用者需要同时遵守运行时依赖、OpenList

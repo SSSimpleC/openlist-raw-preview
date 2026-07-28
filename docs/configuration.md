@@ -65,6 +65,17 @@ OpenList 点击 RAW 文件并选择对应的 iframe 预览项即可。
 - `RAW_PREVIEW_CACHE_MAX_BYTES`：JPEG 缓存上限，默认 5 GiB。
 - `RAW_PREVIEW_MAX_REMOTE_BYTES`：远端 RAW 临时下载上限，默认 512 MiB。
 - `RAW_PREVIEW_DECODE_TIMEOUT`：单个解码任务超时，默认 120 秒。
+- `RAW_PREVIEW_METADATA_TIMEOUT`：单个 EXIF 读取任务超时，默认 30 秒。
+
+## 6. EXIF 信息
+
+预览页会在图片下方按需读取并显示一组受限的基础 EXIF 信息：相机、镜头、拍摄
+时间、尺寸、快门、光圈、ISO、焦距和 GPS（若文件包含这些字段）。ExifRead 只读
+源文件，结果以 JSON sidecar 缓存在服务的数据目录；不会修改 RAW，也不会扫描目录
+或预先生成索引。元数据读取和 RAW 解码共用单任务锁，便于低功耗服务器控制并发。
+
+GPS 属于敏感信息。若预览服务可能被不可信用户访问，建议不要把它暴露到公网；本
+项目默认只允许明确配置的 OpenList origin，并且不把签名 URL 写入日志。
 
 服务不会扫描照片目录或生成缩略图索引。空闲时只保留 HTTP 进程和 Python 运行时；
 一次只允许一个解码任务，适合低功耗或单核服务器。

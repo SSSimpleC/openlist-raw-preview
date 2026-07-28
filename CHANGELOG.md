@@ -4,7 +4,9 @@
 
 ## [Unreleased]
 
-- 暂无。
+- 增加按需读取基础 EXIF/GPS 元数据，并在 RAW 预览图下方展示。
+- 使用 ExifRead 处理通用 EXIF，使用 rawpy 元数据作为缺失字段的回退。
+- 元数据结果使用版本化 JSON sidecar 缓存，并与 RAW 解码共用并发计数。
 
 ## [0.1.0] - 2026-07-29
 

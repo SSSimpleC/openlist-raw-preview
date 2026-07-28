@@ -35,8 +35,10 @@ MIN_EMBEDDED_EDGE = env_int("RAW_PREVIEW_MIN_EMBEDDED_EDGE", 1024)
 CACHE_MAX_BYTES = env_int("RAW_PREVIEW_CACHE_MAX_BYTES", 5 * 1024**3)
 MAX_REMOTE_BYTES = env_int("RAW_PREVIEW_MAX_REMOTE_BYTES", 512 * 1024**2)
 DECODE_TIMEOUT = env_int("RAW_PREVIEW_DECODE_TIMEOUT", 120)
+METADATA_TIMEOUT = env_int("RAW_PREVIEW_METADATA_TIMEOUT", 30)
 PROBE_TIMEOUT = env_int("RAW_PREVIEW_PROBE_TIMEOUT", 15)
 DOWNLOAD_TIMEOUT = env_int("RAW_PREVIEW_DOWNLOAD_TIMEOUT", 30)
+METADATA_CACHE_VERSION = "exifread-3.5.1-rawpy-0.27.0-v1"
 
 ALLOWED_EXTENSIONS = {
     "3fr",
@@ -322,12 +324,18 @@ def cache_path_for(source: SourceSpec) -> Path:
     return CACHE_DIR / f"{cache_key(source)}.jpg"
 
 
+def metadata_cache_path_for(source: SourceSpec) -> Path:
+    identity = f"{cache_key(source)}:{METADATA_CACHE_VERSION}".encode("utf-8")
+    key = hashlib.sha256(identity).hexdigest()
+    return CACHE_DIR / f"{key}.json"
+
+
 def prune_cache() -> None:
     try:
         entries = []
         total = 0
         for item in CACHE_DIR.iterdir():
-            if item.suffix.lower() != ".jpg" or not item.is_file():
+            if item.suffix.lower() not in {".jpg", ".json"} or not item.is_file():
                 continue
             try:
                 stat = item.stat()
@@ -482,6 +490,98 @@ def image_bytes(source: SourceSpec) -> tuple[bytes, str, bool]:
         DECODE_LOCK.release()
 
 
+def cached_metadata(output: Path) -> Optional[dict[str, object]]:
+    try:
+        payload = json.loads(output.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, json.JSONDecodeError):
+        return None
+    if not isinstance(payload, dict):
+        return None
+    if payload.get("metadata_version") != "1":
+        return None
+    return payload
+
+
+def metadata_to_cache(source: SourceSpec, output: Path) -> dict[str, object]:
+    CACHE_DIR.mkdir(parents=True, exist_ok=True)
+    temp_output = CACHE_DIR / f".{output.name}.{os.getpid()}.{threading.get_ident()}.part"
+    input_path: Optional[Path] = None
+    remove_input = False
+    counted = False
+    try:
+        if source.local_path is not None:
+            input_path = source.local_path
+        else:
+            input_path = download_remote(source)
+            remove_input = True
+
+        adjust_counter("decode", 1)
+        counted = True
+        env = os.environ.copy()
+        env.update(
+            {
+                "OMP_NUM_THREADS": "1",
+                "OPENBLAS_NUM_THREADS": "1",
+                "MKL_NUM_THREADS": "1",
+                "NUMEXPR_NUM_THREADS": "1",
+            }
+        )
+        result = subprocess.run(
+            [
+                sys.executable,
+                "/app/metadata_worker.py",
+                str(input_path),
+                str(temp_output),
+            ],
+            env=env,
+            capture_output=True,
+            text=True,
+            timeout=METADATA_TIMEOUT,
+            check=False,
+        )
+        if result.returncode != 0 or not temp_output.is_file():
+            detail = (result.stderr or result.stdout or "未知 EXIF 读取错误").strip()
+            raise PreviewError(422, f"EXIF 读取失败：{detail[:180]}")
+        payload = json.loads(temp_output.read_text(encoding="utf-8"))
+        if not isinstance(payload, dict) or len(json.dumps(payload, ensure_ascii=False)) > 65536:
+            raise PreviewError(422, "EXIF 元数据结果无效")
+        os.replace(temp_output, output)
+        prune_cache()
+        return payload
+    except subprocess.TimeoutExpired as exc:
+        raise PreviewError(504, "EXIF 读取超时，已终止本次任务") from exc
+    finally:
+        if counted:
+            adjust_counter("decode", -1)
+        if temp_output.exists():
+            try:
+                temp_output.unlink()
+            except OSError:
+                pass
+        if remove_input and input_path is not None:
+            try:
+                input_path.unlink()
+            except OSError:
+                pass
+
+
+def metadata_for_source(source: SourceSpec) -> dict[str, object]:
+    output = metadata_cache_path_for(source)
+    cached = cached_metadata(output)
+    if cached is not None:
+        return cached
+
+    if not DECODE_LOCK.acquire(timeout=5):
+        raise PreviewError(429, "已有另一个 RAW 任务正在处理，请稍后重试")
+    try:
+        cached = cached_metadata(output)
+        if cached is not None:
+            return cached
+        return metadata_to_cache(source, output)
+    finally:
+        DECODE_LOCK.release()
+
+
 def cleanup_tmp() -> None:
     try:
         TMP_DIR.mkdir(parents=True, exist_ok=True)
@@ -498,26 +598,123 @@ def cleanup_tmp() -> None:
 
 def html_page(source: str) -> bytes:
     image_url = "/image?src=" + urllib.parse.quote(source, safe="")
+    metadata_url = "/metadata?src=" + urllib.parse.quote(source, safe="")
     escaped = html.escape(image_url, quote=True)
+    metadata_url_js = (
+        json.dumps(metadata_url, ensure_ascii=False)
+        .replace("<", "\\u003c")
+        .replace(">", "\\u003e")
+        .replace("&", "\\u0026")
+    )
     return f"""<!doctype html>
 <html lang="zh-CN">
 <head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>RAW 预览</title>
 <style>
-html,body{{margin:0;width:100%;height:100%;background:#171717;color:#ddd;font:14px system-ui,sans-serif}}
-body{{display:flex;align-items:center;justify-content:center;overflow:hidden}}
-figure{{margin:0;width:100%;height:100%;display:flex;align-items:center;justify-content:center;position:relative}}
-img{{max-width:100%;max-height:100%;object-fit:contain;user-select:none}}
+html,body{{margin:0;min-height:100%;background:#171717;color:#ddd;font:14px system-ui,sans-serif}}
+body{{overflow:auto}}
+main{{min-height:100vh;display:flex;flex-direction:column}}
+figure{{flex:1 1 auto;min-height:260px;margin:0;display:flex;align-items:center;justify-content:center;position:relative;padding:12px;box-sizing:border-box}}
+img{{max-width:100%;max-height:calc(100vh - 190px);object-fit:contain;user-select:none}}
 figcaption{{position:absolute;left:10px;bottom:8px;padding:4px 8px;background:#0009;border-radius:4px;color:#ccc}}
+.metadata{{flex:0 0 auto;max-height:30vh;overflow:auto;margin:0 12px 12px;padding:10px 12px;background:#242424;border:1px solid #3a3a3a;border-radius:8px;box-sizing:border-box}}
+.metadata h2{{margin:0 0 8px;font-size:14px;font-weight:600;color:#f0f0f0}}
+.metadata-grid{{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:6px 18px}}
+.metadata-row{{display:flex;gap:8px;min-width:0;line-height:1.45}}
+.metadata-label{{flex:0 0 auto;color:#999}}
+.metadata-value{{min-width:0;overflow-wrap:anywhere;color:#eee}}
+.metadata-empty{{color:#999}}
+@media (max-height:600px){{figure{{min-height:180px}}img{{max-height:calc(100vh - 145px)}}.metadata{{max-height:35vh}}}}
 </style>
 </head>
-<body><figure><img src="{escaped}" alt="RAW 预览" loading="eager"><figcaption>RAW 预览</figcaption></figure></body>
+<body><main>
+<figure><img id="preview" src="{escaped}" alt="RAW 预览" loading="eager"><figcaption>RAW 预览</figcaption></figure>
+<section class="metadata" id="metadata" aria-live="polite">
+<h2>照片信息</h2><div class="metadata-empty">正在读取 EXIF 元数据…</div>
+</section>
+</main>
+<script>
+const metadataUrl = {metadata_url_js};
+const image = document.getElementById("preview");
+const panel = document.getElementById("metadata");
+
+function addRow(grid, label, value) {{
+  if (value === undefined || value === null || value === "") return;
+  const row = document.createElement("div");
+  row.className = "metadata-row";
+  const name = document.createElement("span");
+  name.className = "metadata-label";
+  name.textContent = label;
+  const content = document.createElement("span");
+  content.className = "metadata-value";
+  content.textContent = String(value);
+  row.append(name, content);
+  grid.append(row);
+}}
+
+function renderMetadata(metadata) {{
+  panel.replaceChildren();
+  const title = document.createElement("h2");
+  title.textContent = "照片信息";
+  panel.append(title);
+  const grid = document.createElement("div");
+  grid.className = "metadata-grid";
+  const camera = [metadata.camera_make, metadata.camera_model].filter(Boolean).join(" ");
+  const lens = [metadata.lens_make, metadata.lens_model].filter(Boolean).join(" ");
+  const size = metadata.width && metadata.height ? `${{metadata.width}} × ${{metadata.height}}` : "";
+  addRow(grid, "相机", camera);
+  addRow(grid, "镜头", lens);
+  addRow(grid, "拍摄时间", metadata.date_time_original);
+  addRow(grid, "尺寸", size);
+  addRow(grid, "快门", metadata.exposure_time);
+  addRow(grid, "光圈", metadata.f_number ? `f/${{metadata.f_number}}` : "");
+  addRow(grid, "ISO", metadata.iso);
+  addRow(grid, "焦距", metadata.focal_length_mm ? `${{metadata.focal_length_mm}} mm` : "");
+  addRow(grid, "等效焦距", metadata.focal_length_35mm ? `${{metadata.focal_length_35mm}} mm` : "");
+  if (metadata.gps && metadata.gps.latitude !== undefined && metadata.gps.longitude !== undefined) {{
+    const altitude = metadata.gps.altitude_m === undefined ? "" : `，海拔 ${{metadata.gps.altitude_m}} m`;
+    addRow(grid, "GPS", `${{metadata.gps.latitude}}, ${{metadata.gps.longitude}}${{altitude}}`);
+  }}
+  if (!grid.children.length) {{
+    const empty = document.createElement("div");
+    empty.className = "metadata-empty";
+    empty.textContent = "没有读取到可用的 EXIF 信息";
+    panel.append(empty);
+  }} else {{
+    panel.append(grid);
+  }}
+}}
+
+async function loadMetadata() {{
+  try {{
+    const response = await fetch(metadataUrl, {{credentials: "omit", cache: "no-store"}});
+    const payload = await response.json();
+    if (!response.ok || payload.status !== "ok") throw new Error("metadata unavailable");
+    renderMetadata(payload.metadata || {{}});
+  }} catch (_error) {{
+    panel.replaceChildren();
+    const title = document.createElement("h2");
+    title.textContent = "照片信息";
+    const empty = document.createElement("div");
+    empty.className = "metadata-empty";
+    empty.textContent = "暂时无法读取 EXIF 信息；RAW 预览本身不受影响";
+    panel.append(title, empty);
+  }}
+}}
+
+if (image.complete) loadMetadata();
+else {{
+  image.addEventListener("load", loadMetadata, {{once: true}});
+  image.addEventListener("error", loadMetadata, {{once: true}});
+}}
+</script>
+</body>
 </html>""".encode("utf-8")
 
 
 class PreviewHandler(BaseHTTPRequestHandler):
-    server_version = "OpenListRawPreview/0.1"
+    server_version = "OpenListRawPreview/0.2"
 
     def log_message(self, fmt: str, *args: object) -> None:
         # Never log query strings: they contain OpenList signed URLs.
@@ -527,10 +724,11 @@ class PreviewHandler(BaseHTTPRequestHandler):
         self.send_header("X-Content-Type-Options", "nosniff")
         self.send_header("Referrer-Policy", "no-referrer")
         if frameable:
-            ancestors = " ".join(sorted(OPENLIST_ORIGINS))
+            ancestors = " ".join(sorted(OPENLIST_ORIGINS)) or "'none'"
             self.send_header(
                 "Content-Security-Policy",
-                f"default-src 'none'; img-src 'self'; style-src 'unsafe-inline'; frame-ancestors {ancestors}",
+                "default-src 'none'; img-src 'self'; connect-src 'self'; "
+                f"script-src 'unsafe-inline'; style-src 'unsafe-inline'; frame-ancestors {ancestors}",
             )
 
     def send_json(self, status: int, payload: dict[str, object]) -> None:
@@ -597,6 +795,12 @@ class PreviewHandler(BaseHTTPRequestHandler):
                 self.send_header("X-RAW-Preview-Cache", "hit" if cached else "miss")
                 self.end_headers()
                 self.wfile.write(body)
+                return
+
+            if parsed.path == "/metadata":
+                source = build_source(source_value)
+                payload = metadata_for_source(source)
+                self.send_json(200, {"status": "ok", "metadata": payload})
                 return
 
             raise PreviewError(404, "预览接口不存在")
