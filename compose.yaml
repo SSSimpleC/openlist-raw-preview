@@ -1,0 +1,51 @@
+services:
+  raw-preview:
+    build:
+      context: .
+    image: ${RAW_PREVIEW_IMAGE:-openlist-raw-preview:local}
+    container_name: ${RAW_PREVIEW_CONTAINER:-openlist-raw-preview}
+    restart: unless-stopped
+    init: true
+    user: "65532:65532"
+    environment:
+      TZ: ${TZ:-UTC}
+      RAW_PREVIEW_PORT: "5260"
+      RAW_PREVIEW_MAX_EDGE: ${RAW_PREVIEW_MAX_EDGE:-2048}
+      RAW_PREVIEW_MIN_EMBEDDED_EDGE: ${RAW_PREVIEW_MIN_EMBEDDED_EDGE:-1024}
+      RAW_PREVIEW_CACHE_MAX_BYTES: ${RAW_PREVIEW_CACHE_MAX_BYTES:-5368709120}
+      RAW_PREVIEW_MAX_REMOTE_BYTES: ${RAW_PREVIEW_MAX_REMOTE_BYTES:-536870912}
+      RAW_PREVIEW_DECODE_TIMEOUT: ${RAW_PREVIEW_DECODE_TIMEOUT:-120}
+      RAW_PREVIEW_PROBE_TIMEOUT: ${RAW_PREVIEW_PROBE_TIMEOUT:-15}
+      RAW_PREVIEW_DOWNLOAD_TIMEOUT: ${RAW_PREVIEW_DOWNLOAD_TIMEOUT:-30}
+      RAW_PREVIEW_OPENLIST_ORIGINS: "${RAW_PREVIEW_OPENLIST_ORIGINS:-}"
+      RAW_PREVIEW_SOURCE_MOUNTS: '${RAW_PREVIEW_SOURCE_MOUNTS:-{}}'
+      RAW_PREVIEW_CACHE_DIR: /var/lib/raw-preview/cache
+      RAW_PREVIEW_TMP_DIR: /var/lib/raw-preview/tmp
+    ports:
+      - "${RAW_PREVIEW_BIND_ADDRESS:-127.0.0.1}:${RAW_PREVIEW_PORT:-5260}:5260"
+    volumes:
+      - type: bind
+        source: ${RAW_PREVIEW_DATA_DIR:-./data}
+        target: /var/lib/raw-preview
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,nodev,size=128m
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 64
+    mem_limit: 1g
+    cpus: 1.0
+    stop_grace_period: 30s
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:5260/healthz', timeout=3).read()"]
+      interval: 60s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "3"
