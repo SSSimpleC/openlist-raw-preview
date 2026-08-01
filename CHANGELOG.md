@@ -4,6 +4,8 @@
 
 ## [Unreleased]
 
+- 支持反向代理下的同源 `/__raw_preview/` iframe 路径。
+- 支持在验证浏览器签名 URL 后，通过私有 OpenList origin 探测和下载源文件。
 - 增加按需读取基础 EXIF/GPS 元数据，并在 RAW 预览图下方展示。
 - 使用 ExifRead 处理通用 EXIF，使用 rawpy 元数据作为缺失字段的回退。
 - 元数据结果使用版本化 JSON sidecar 缓存，并与 RAW 解码共用并发计数。

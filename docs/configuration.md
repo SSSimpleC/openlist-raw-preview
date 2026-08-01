@@ -10,6 +10,16 @@ RAW_PREVIEW_OPENLIST_ORIGINS=http://openlist.example.test:5244,http://192.0.2.10
 
 协议、主机和端口必须完全匹配。服务默认不信任任何 origin。
 
+如果浏览器通过 SSH 隧道或反向代理打开 OpenList，而该浏览器地址不能从 sidecar
+容器内部访问，可把已经验证过的签名 URL 的服务器端请求改写到一个私有 origin：
+
+```dotenv
+RAW_PREVIEW_FETCH_ORIGIN=http://openlist:5244
+```
+
+sidecar 仍会先严格验证浏览器传入 URL 的 origin、`/p/...` 路径与签名；仅在探测和
+下载时替换协议与主机，签名路径和查询参数保持不变。
+
 ## 2. 端口绑定
 
 如果 OpenList 和预览服务运行在同一台服务器，且浏览器也在服务器上，可以保留
@@ -48,13 +58,16 @@ services:
 
 ## 4. OpenList iframe 配置
 
-将 `examples/openlist-iframe-previews.json` 中的
-`SERVER_LAN_ADDRESS` 替换为预览服务地址，然后把映射加入 OpenList 的
+推荐由 OpenList 的反向代理提供同源 `/__raw_preview/` 路径，然后把
+`examples/openlist-iframe-previews.json` 中的映射加入 OpenList 的
 `iframe_previews` 配置。关键部分是：
 
 ```text
-http://SERVER_LAN_ADDRESS:5260/view?src=$e_url
+/__raw_preview/view?src=$e_url
 ```
+
+若不使用反向代理，也可以继续填写 sidecar 的绝对 URL，例如
+`http://SERVER_LAN_ADDRESS:5260/view?src=$e_url`。
 
 `$e_url` 必须原样保留；它包含 OpenList 生成的签名文件 URL。保存配置后，从
 OpenList 点击 RAW 文件并选择对应的 iframe 预览项即可。

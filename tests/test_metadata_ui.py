@@ -12,7 +12,8 @@ class MetadataUiTests(unittest.TestCase):
         source = "http://openlist.example.test:5244/p/Photos/test.NEF?sign=sample"
         body = html_page(source).decode("utf-8")
         self.assertIn("照片信息", body)
-        self.assertIn("/metadata?src=", body)
+        self.assertIn("metadata?src=", body)
+        self.assertNotIn('src="/image?src=', body)
         self.assertIn("fetch(metadataUrl,", body)
         self.assertIn("textContent", body)
         self.assertNotIn("innerHTML", body)

@@ -1,5 +1,6 @@
 import os
 import unittest
+from unittest.mock import patch
 
 # Keep the tests deterministic and independent from a user's deployment.
 os.environ["RAW_PREVIEW_OPENLIST_ORIGINS"] = "http://openlist.example.test:5244"
@@ -15,6 +16,7 @@ class OpenListUrlTests(unittest.TestCase):
             "%E5%A4%A7%E5%AD%A6/test.NEF?sign=sample"
         )
         parsed = parse_openlist_url(url)
+        self.assertEqual(parsed[0], url)
         self.assertEqual(parsed[2], "Photos")
         self.assertEqual(parsed[4], "nef")
         self.assertEqual(parsed[3][-1], "test.NEF")
@@ -49,6 +51,32 @@ class OpenListUrlTests(unittest.TestCase):
         from app.server import LOCAL_SOURCES
 
         self.assertEqual(LOCAL_SOURCES["Photos"].as_posix(), "/sources/Photos")
+
+    def test_rewrite_keeps_signed_path_and_query(self):
+        from app.server import fetch_url_for, parse_fetch_origin
+
+        source = "http://openlist.example.test:5244/p/Photos/a.NEF?sign=a%2Bb"
+        self.assertEqual(
+            parse_fetch_origin("HTTPS://OpenList.Internal:5244/"),
+            "https://openlist.internal:5244",
+        )
+        with patch("app.server.OPENLIST_FETCH_ORIGIN", "http://openlist.internal:5244"):
+            self.assertEqual(
+                fetch_url_for(source),
+                "http://openlist.internal:5244/p/Photos/a.NEF?sign=a%2Bb",
+            )
+
+    def test_rejects_unsafe_fetch_origins(self):
+        from app.server import parse_fetch_origin
+
+        for value in (
+            "file:///tmp/openlist",
+            "http://user:pass@openlist.internal:5244",
+            "http://openlist.internal:5244/path",
+            "http://openlist.internal:5244?query=1",
+        ):
+            with self.subTest(value=value), self.assertRaises(RuntimeError):
+                parse_fetch_origin(value)
 
 
 if __name__ == "__main__":

@@ -82,6 +82,38 @@ OPENLIST_ORIGINS = {
     if value.strip()
 }
 
+
+def parse_fetch_origin(raw_value: str) -> str:
+    """Validate an optional private OpenList origin used by the sidecar.
+
+    The browser-facing signed URL is still checked against OPENLIST_ORIGINS.
+    Only the origin is replaced for the server-side probe/download, preserving
+    the exact signed path and query string.
+    """
+    value = raw_value.strip().rstrip("/")
+    if not value:
+        return ""
+    try:
+        parsed = urllib.parse.urlsplit(value)
+    except ValueError as exc:
+        raise RuntimeError("RAW_PREVIEW_FETCH_ORIGIN 格式错误") from exc
+    if (
+        parsed.scheme.lower() not in {"http", "https"}
+        or not parsed.netloc
+        or parsed.username
+        or parsed.password
+        or parsed.path not in {"", "/"}
+        or parsed.query
+        or parsed.fragment
+    ):
+        raise RuntimeError("RAW_PREVIEW_FETCH_ORIGIN 必须是纯 HTTP(S) origin")
+    return f"{parsed.scheme.lower()}://{parsed.netloc.lower()}"
+
+
+OPENLIST_FETCH_ORIGIN = parse_fetch_origin(
+    os.environ.get("RAW_PREVIEW_FETCH_ORIGIN", "")
+)
+
 CACHE_DIR = Path(os.environ.get("RAW_PREVIEW_CACHE_DIR", "/var/lib/raw-preview/cache"))
 TMP_DIR = Path(os.environ.get("RAW_PREVIEW_TMP_DIR", "/var/lib/raw-preview/tmp"))
 
@@ -180,6 +212,17 @@ def source_url_from_query(raw_value: str) -> str:
     return value
 
 
+def fetch_url_for(validated_url: str) -> str:
+    """Route a validated signed URL through an optional private origin."""
+    if not OPENLIST_FETCH_ORIGIN:
+        return validated_url
+    source = urllib.parse.urlsplit(validated_url)
+    target = urllib.parse.urlsplit(OPENLIST_FETCH_ORIGIN)
+    return urllib.parse.urlunsplit(
+        (target.scheme, target.netloc, source.path, source.query, "")
+    )
+
+
 def parse_openlist_url(raw_value: str) -> tuple[str, str, str, tuple[str, ...], str]:
     url = source_url_from_query(raw_value)
     try:
@@ -209,7 +252,7 @@ def parse_openlist_url(raw_value: str) -> tuple[str, str, str, tuple[str, ...], 
     extension = Path(filename).suffix.lower().lstrip(".")
     if extension not in ALLOWED_EXTENSIONS:
         raise PreviewError(415, f"暂不支持 {extension or '未知'} 文件格式")
-    return url, decoded_path, parts[0], parts[1:], extension
+    return fetch_url_for(url), decoded_path, parts[0], parts[1:], extension
 
 
 def response_metadata(response: object) -> tuple[Optional[int], str, str]:
@@ -597,8 +640,10 @@ def cleanup_tmp() -> None:
 
 
 def html_page(source: str) -> bytes:
-    image_url = "/image?src=" + urllib.parse.quote(source, safe="")
-    metadata_url = "/metadata?src=" + urllib.parse.quote(source, safe="")
+    # Relative URLs keep working both at /view and behind a same-origin
+    # /__raw_preview/ reverse-proxy prefix.
+    image_url = "image?src=" + urllib.parse.quote(source, safe="")
+    metadata_url = "metadata?src=" + urllib.parse.quote(source, safe="")
     escaped = html.escape(image_url, quote=True)
     metadata_url_js = (
         json.dumps(metadata_url, ensure_ascii=False)
@@ -724,7 +769,7 @@ class PreviewHandler(BaseHTTPRequestHandler):
         self.send_header("X-Content-Type-Options", "nosniff")
         self.send_header("Referrer-Policy", "no-referrer")
         if frameable:
-            ancestors = " ".join(sorted(OPENLIST_ORIGINS)) or "'none'"
+            ancestors = " ".join(["'self'", *sorted(OPENLIST_ORIGINS)])
             self.send_header(
                 "Content-Security-Policy",
                 "default-src 'none'; img-src 'self'; connect-src 'self'; "
